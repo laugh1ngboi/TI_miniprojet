@@ -4,131 +4,184 @@
 #include <opencv2/imgproc.hpp>
 #include <opencv2/features2d.hpp>
 #include <opencv2/imgcodecs.hpp>
-//#include <opencv2/xfeatures2d.hpp>
 
 using namespace cv;
 using namespace std;
-//using namespace cv::xfeatures2d;
 
+class Backproj {//Backproj for an image of 3 channels from an RGB image (also calculate the corresponding histograms)
+public:
+    Backproj(Mat input, Mat _masque, Mat _frag){
+        src = input;
+        frag = _frag;
+        masque = _masque;
+        bins = 25;
+        init_hist_tab2();
+        imshow("backprojection", backproj);
+    }
+protected://attributes:
+    Mat dest;//destination array -> hue 
+    Mat src;//fresque
+    Mat frag; // fragment
 
-Mat hue_frag, gray_frag,hue_fresque;
-int bins = 25;
-void Hist_and_Backproj(int, void*);
+    //for hist :
+    Mat masque;//supprime le pic ?0 au début des histogrammes
+    int ch[2];//tab of the channels
+    Mat hist_tab[3];//hist_tab[0] = histrogram for channel 0
+    Mat hist_concat;
+    int bins;
+    const float* ranges;
 
-int main(int argc, char** argv)
+    //for backproj:
+    Mat backproj_tab[3];
+    Mat backproj_concat;
+    Mat hist;
+    Mat backproj;
+protected://methods
+    void set_tab_channel(int src_ch, int dest_ch) 
+    {
+        ch[0] = src_ch;//channel from source array = input
+        ch[1] = dest_ch;//channel for destination array
+    }
+
+    void init_hist_tab2() 
+    {
+        /*for (int i = 0; i < 3; i++) {
+            hist_tab[i].create(frag.size(),frag.depth());
+        }*/
+        /*frag[0]->hist_tab[0]
+        * frag[1]->hist_tab[1]
+        * frag[2]->hist_tab[2]
+        */
+       //int fromto[] = { 0,0, 1,1, 2,2 };
+        //mixChannels(&frag, 1, hist_tab, 1, fromto, 3);
+        int channels[] = {0,1,2};
+        int histSize[] = {bins,bins,bins};
+        float hR0[] = { 0 , 180 };
+        float hR12[] = { 0, 256 };
+        const float* ranges[] = { hR0, hR12, hR12 };
+        calcHist(&frag, 1, channels, masque, hist, 3, histSize, ranges, true, false);
+        calcBackProject(&src, 1, channels, hist, backproj, ranges, 1, true);//fresque complete et histogramme du fragment
+    }
+
+    void init_hist_tab() //create histogram
+    {
+        dest.create(frag.size(), frag.depth());//initialize the destination array as we need it later on
+
+        
+
+        int histSize = MAX(bins, 2);
+        float hR0[] = { 0 , 180 };
+        float hR12[] = { 0, 256 };
+        const float* r[] = { hR0, hR12, hR12 };
+
+        for (int i = 0; i < 3; i++) {
+            ranges = r[i];
+
+            //hist
+            set_tab_channel(i, 0);
+            mixChannels(&src, 1, &dest, 1, ch, 1);
+            calcHist(&dest, 1, 0, masque, hist_tab[i], 1, &histSize, &ranges, true, false);//parametre masque dans cette fonction
+            normalize(hist_tab[i], hist_tab[i], 0, 255, NORM_MINMAX, -1, Mat());
+
+            calcBackProject(&src, 1, 0, hist_tab[i], backproj_tab[i], &ranges, 1, true);//fresque complete et histogramme du fragment
+
+        }
+
+        cv::vconcat(hist_tab, 3 , hist_concat);
+
+        cout << "Taille de hist_tab[0] = " << hist_tab[0].size() << endl;
+        cout << "Taille de hist_tab[1] = " << hist_tab[1].size << endl;
+        cout << "Taille de hist_tab[2] = " << hist_tab[2].size << endl;
+        cout << "Taille de hist_concat = " << hist_concat.size << endl;
+        cout << "histsize : " << histSize << endl;
+    }
+
+public://methods
+    void show_hist()
+    {
+        int histSize = MAX(3*bins, 2);
+        String windStr;
+
+        //drawing histogram
+        int w = 800, h = 600;
+        int bin_w = cvRound((double)w / histSize);
+       
+        Mat histImg = Mat::zeros(h, w, CV_8UC3);
+       
+        for (int i = 0; i < 3*bins; i++)
+        {
+            rectangle(histImg, Point(i * bin_w, h), Point((i + 1) * bin_w, h - cvRound(hist_concat.at<float>(i) * h / 255.0)), Scalar(0, 0, 255), FILLED);
+        }
+        windStr = cv::format("Histogram diagram for 3 channels of HSV");
+        imshow(windStr, histImg);
+    }
+
+    void show_backproj() {
+        String windStr;
+        windStr = cv::format("Backprojection diagram for 3 channels of HSV");
+        imshow(windStr, backproj_concat);
+    }
+};
+/*
+class KeyPoint {
+private://attributes
+
+    //keypoint detection :
+    Ptr<BRISK> Briskdetector;
+    std::vector<KeyPoint> keypoints;
+    int thresh, octaves;
+    float patternScale;
+public:
+    KeyPoint(Mat& m, int _t=30, int _o=3, float _p=1.0f) : patternScale(_t), octaves(_o), patternScale(_p)
+    {
+
+        //-- Step 1: Detect the keypoints using SURF Detector
+        Briskdetector = BRISK::create(thresh, octaves, patternScale);
+        //Briskdetector->detect(m, keypoints);
+    }
+};*/
+
+int main()
 {
     // lire un fichier en tant qu'image
     //Mat image = imread("./fresque0.ppm", IMREAD_GRAYSCALE); // choissisez le bon chemin de votre image
-   Mat image_templet = imread("./fresque0.ppm", IMREAD_COLOR); // choissisez le bon chemin de votre image
+    Mat fresque_rgb= imread("./fresque0.ppm", IMREAD_COLOR); // choissisez le bon chemin de votre image
 
     // afficher une erreur si le fichier de l'image n'existe pas
-    if (image_templet.empty()) {
-        cout << "Image non trouvee" << endl;
-        // attendre qu'un bouton soit appuy?
-        cin.get();
-        return -1;
-    }
-    /*********************Debut de coder***********************/
-    
-    Mat image_frag = imread("./frag_eroded/frag_eroded_0007.ppm", IMREAD_COLOR);
-    if (image_frag.empty()) {
-        cout << "Image non trouvee" << endl;
-        // attendre qu'un bouton soit appuy?
-        cin.get();
-        return -1;
-    }
-   //imshow("nom de l'image", image_frag);
-    /*
-    vector<Mat> bgr_templet, bgr_frag;
-    split(image_templet, bgr_templet);
-    split(image_frag, bgr_frag);
-    int histSize = 256;
-    float range[] = { 0, 256 }; //the upper boundary is exclusive
-    const float* histRange = { range };
-    bool uniform = true, accumulate = false;
-    Mat b_hist_templet, g_hist_templet, r_hist_templet;
-    Mat b_hist_frag, g_hist_frag, r_hist_frag;
-    calcHist(&bgr_frag[0], 1, 0, Mat(), b_hist_frag, 1, &histSize, &histRange, uniform, accumulate);
-    calcHist(&bgr_frag[1], 1, 0, Mat(), g_hist_frag, 1, &histSize, &histRange, uniform, accumulate);
-    calcHist(&bgr_frag[2], 1, 0, Mat(), r_hist_frag, 1, &histSize, &histRange, uniform, accumulate);
-    int hist_w = 512, hist_h = 400;
-    int bin_w = cvRound((double)hist_w / histSize);
-    Mat histImage(hist_h, hist_w, CV_8UC3, Scalar(0, 0, 0));
-    normalize(b_hist_frag, b_hist_frag, 0, histImage.rows, NORM_MINMAX, -1, Mat());
-    normalize(g_hist_frag, g_hist_frag, 0, histImage.rows, NORM_MINMAX, -1, Mat());
-    normalize(r_hist_frag, r_hist_frag, 0, histImage.rows, NORM_MINMAX, -1, Mat());
-    for (int i = 1; i < histSize; i++)
-    {
-        line(histImage, Point(bin_w * (i - 1), hist_h - cvRound(b_hist_frag.at<float>(i - 1))),
-            Point(bin_w * (i), hist_h - cvRound(b_hist_frag.at<float>(i))),
-            Scalar(255, 0, 0), 2, 8, 0);
-        line(histImage, Point(bin_w * (i - 1), hist_h - cvRound(g_hist_frag.at<float>(i - 1))),
-            Point(bin_w * (i), hist_h - cvRound(g_hist_frag.at<float>(i))),
-            Scalar(0, 255, 0), 2, 8, 0);
-        line(histImage, Point(bin_w * (i - 1), hist_h - cvRound(r_hist_frag.at<float>(i - 1))),
-            Point(bin_w * (i), hist_h - cvRound(r_hist_frag.at<float>(i))),
-            Scalar(0, 0, 255), 2, 8, 0);
-    }
-    imshow("nom de l'image", image_frag);
-    imshow("calcHist Demo", histImage);
-    */
-    Mat hsv_frag,hsv_fresque;
-    cvtColor(image_frag, hsv_frag, COLOR_BGR2HSV);
-    cvtColor(image_frag, gray_frag, COLOR_BGR2GRAY);
-    cvtColor(image_templet, hsv_fresque, COLOR_BGR2HSV);
-    //Mat hue_frag;
-    hue_frag.create(hsv_frag.size(),hsv_frag.depth());
-    hue_fresque.create(hsv_fresque.size(), hsv_fresque.depth());
-    int fromto[] = { 0,0 };
-    mixChannels(&hsv_frag,1,&hue_frag,1,fromto,1);
-    mixChannels(&hsv_fresque, 1, &hue_fresque, 1, fromto, 1);
-    const char* window_image = "Source image";
-    namedWindow(window_image);
-    createTrackbar("* Hue  bins: ", window_image, &bins, 180, Hist_and_Backproj);
-    Hist_and_Backproj(0, 0);
-    imshow(window_image, image_frag);
-    //imshow("image gray", gray_frag);
-    /*
-    int minHessian = 400;
-    Ptr<SURF> detector = SURF::create(minHessian);
-    std::vector<KeyPoint> keypoints;
-    detector->detect(src, keypoints);
-    //-- Draw keypoints
-    Mat img_keypoints;
-    drawKeypoints(src, keypoints, img_keypoints);
-    //-- Show detected (drawn) keypoints
-    imshow("SURF Keypoints", img_keypoints);
-    */
+    if (fresque_rgb.empty()) {
+        cout << "Image fresque non trouvee" << endl;
 
+        // attendre qu'un bouton soit appuy?
+        cin.get();
+        return -1; 
+    }
+
+    Mat frag_rgb = imread("./frag_eroded/frag_eroded_0041.ppm", IMREAD_COLOR); // choissisez le bon chemin de votre image
+
+    // afficher une erreur si le fichier de l'image n'existe pas
+    if (frag_rgb.empty()) {
+        cout << "Image fragment non trouvee" << endl;
+
+        // attendre qu'un bouton soit appuy?
+        cin.get();
+        return -1;
+    }
+
+    /*********************Debut de coder***********************/
+    Mat frag_hsv, fresque_hsv, masque;
+    cvtColor(frag_rgb, masque, COLOR_BGR2GRAY); // 
+    cvtColor(fresque_rgb, fresque_hsv, COLOR_BGR2HSV);
+    cvtColor(frag_rgb, frag_hsv, COLOR_BGR2HSV);
+
+    Backproj h(fresque_hsv, masque, frag_hsv);
+    //h.show_hist();
+    //h.show_backproj();
     /*********************Fin de coder*************************/
 
     // afficher l'image dans une fenetre avec un nom au choix
-    //imshow("nom de l'image", image_templet);
+    imshow("nom de l'image", fresque_rgb); 
+    imshow("frag", frag_rgb);
     // attendre qu'un bouton soit appuy?pour arreter
     waitKey(0);
     return 0;
-}
-
-void Hist_and_Backproj(int, void*)
-{
-    int histSize = MAX(bins, 2);
-    float hue_range[] = { 0, 180 };
-    const float* ranges = { hue_range };
-    Mat hist;
-    calcHist(&hue_frag, 1, 0, gray_frag, hist, 1, &histSize, &ranges, true, false);
-    //calcHist(&hue_frag, 1, 0, Mat(), hist, 1, &histSize, &ranges, true, false);
-    normalize(hist, hist, 0, 255, NORM_MINMAX, -1, Mat());
-    Mat backproj;
-    //calcBackProject(&hue_frag, 1, 0, hist, backproj, &ranges, 1, true);
-    calcBackProject(&hue_fresque, 1, 0, hist, backproj, &ranges, 1, true);
-    imshow("BackProj", backproj);
-    int w = 400, h = 400;
-    int bin_w = cvRound((double)w / histSize);
-    Mat histImg = Mat::zeros(h, w, CV_8UC3);
-    for (int i = 0; i < bins; i++)
-    {
-        rectangle(histImg, Point(i * bin_w, h), Point((i + 1) * bin_w, h - cvRound(hist.at<float>(i) * h / 255.0)),
-            Scalar(0, 0, 255), FILLED);
-    }
-    imshow("Histogram", histImg);
 }
